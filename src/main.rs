@@ -4,18 +4,60 @@ use bracket_lib::prelude::*;
 
 const SCREEN_WIDTH: i32 = 80;
 const SCREEN_HEIGHT: i32 = 50;
-const FRAME_DURATION: f32 = 20.0; //updates the game physics in every 75ms
+const FRAME_DURATION: f32 = 75.0; //updates the game physics in every 75ms
 const DRAGON_START_X: i32 = 5;
 const DRAGON_START_Y: i32 = 25;
 const CENTER_HEADLINE: i32 = 5;
 const CENTER_OPTION_1: i32 = 8;
 const CENTER_OPTION_2: i32 = 9;
 const CENTER_OPTION_3: i32 = 10;
+const GAP_Y_MIN: i32 = 10;
+const GAP_Y_MAX: i32 = 40;
 
 enum GameMode {
     Menu,
     Playing,
     End,
+}
+
+struct Obstacle {
+    x: i32,
+    gap_y: i32, //specifying at which position of the wall a gap should occur for the dragon to go through
+    size: i32,  //size of the gap
+}
+
+impl Obstacle {
+    fn new(x: i32, score: i32) -> Self {
+        let mut random = RandomNumberGenerator::new();
+        Obstacle {
+            x,
+            gap_y: random.range(GAP_Y_MIN, GAP_Y_MAX), //randomly selecting the position of gap
+            size: i32::max(2, 20 - score), //increasing difficyulty by reducing the size as dragon advances
+        }
+    }
+
+    fn render(&mut self, ctx: &mut BTerm, player_x: i32) {
+        let distance_x = self.x - player_x;
+        let half_size = self.size / 2;
+
+        for y in 0..self.gap_y - half_size {
+            //drawing the top half oof  the wall
+            ctx.set(distance_x, y, RED, BLACK, to_cp437('|'));
+        }
+
+        for y in self.gap_y + half_size..SCREEN_HEIGHT {
+            //drawing the bottom half oof  the wall
+            ctx.set(distance_x, y, RED, BLACK, to_cp437('|'));
+        }
+    }
+
+    fn hit_obstacle(&mut self, dragon: &Dragon) -> bool {
+        let x_matching = self.x == dragon.x;
+        let half_size = self.size / 2;
+        let y_top_matching = dragon.y < self.gap_y - half_size;
+        let y_bottom_matching = dragon.y > self.gap_y + half_size;
+        x_matching && (y_top_matching || y_bottom_matching)
+    }
 }
 
 struct Dragon {
@@ -40,7 +82,7 @@ impl Dragon {
     fn gravity_and_move(&mut self) {
         if self.velocity < 2.0 {
             self.velocity += 0.2; //gradually applying gravity against the upward momentum
-                                 //remember, the greater the velocity the dragon goes downwards
+                                  //remember, the greater the velocity the dragon goes downwards
         }
         self.y += self.velocity as i32; //remember 0 is the top of the screen, so if the velocity is -ve the dragon flies upward
         self.x += 1; //incrementing the x pos of dragon
@@ -60,6 +102,8 @@ struct State {
     mode: GameMode,
     dragon: Dragon,
     frame_time: f32, //time between each frame refresh
+    obstacle: Obstacle,
+    score: i32,
 }
 
 impl GameState for State {
@@ -78,6 +122,8 @@ impl State {
             mode: GameMode::Menu,
             dragon: Dragon::new(DRAGON_START_X, DRAGON_START_Y),
             frame_time: 0.0,
+            obstacle: Obstacle::new(SCREEN_WIDTH, 0),
+            score: 0,
         }
     }
 
@@ -95,8 +141,16 @@ impl State {
 
         self.dragon.render(ctx);
         ctx.print(0, 0, "press SPACE to flap");
+        ctx.print(0, 1, &format!("Your Score {}", self.score));
 
-        if self.dragon.y > SCREEN_HEIGHT {
+        self.obstacle.render(ctx, self.dragon.x);
+
+        if self.dragon.x > self.obstacle.x {
+            self.score += 1;
+            self.obstacle = Obstacle::new(self.dragon.x + SCREEN_WIDTH, self.score)
+        }
+
+        if self.dragon.y > SCREEN_HEIGHT || self.obstacle.hit_obstacle(&self.dragon) {
             self.mode = GameMode::End;
         }
     }
@@ -120,8 +174,9 @@ impl State {
     fn dead(&mut self, ctx: &mut BTerm) {
         ctx.cls();
         ctx.print_centered(CENTER_HEADLINE, "You are Dead!");
-        ctx.print_centered(CENTER_OPTION_1, "(P) Play Again");
-        ctx.print_centered(CENTER_OPTION_2, "(Q) Quit Game");
+        ctx.print_centered(CENTER_OPTION_1, &format!("Your Score {}", self.score));
+        ctx.print_centered(CENTER_OPTION_2, "(P) Play Again");
+        ctx.print_centered(CENTER_OPTION_3, "(Q) Quit Game");
 
         if let Some(key) = ctx.key {
             match key {
@@ -133,7 +188,11 @@ impl State {
     }
 
     fn restart(&mut self) {
-        self.mode = GameMode::Playing
+        self.dragon = Dragon::new(DRAGON_START_X, DRAGON_START_Y);
+        self.obstacle = Obstacle::new(SCREEN_WIDTH, 0);
+        self.frame_time = 0.0;
+        self.score = 0;
+        self.mode = GameMode::Playing;
     }
 }
 
